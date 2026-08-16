@@ -1,0 +1,6 @@
+{
+  "name": "Çat Kapı - Premium Dijital Showroom",
+  "description": "Mersin'in önde gelen lüks kapı, mobilya ve mutfak tasarım üreticisi Çat Kapı için hazırlanan kurumsal web sitesi ve interaktif showroom uygulaması.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
