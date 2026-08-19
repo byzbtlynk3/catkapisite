@@ -25,6 +25,7 @@ interface AdminCmsModalProps {
   siteSettings: SiteSettings;
   onSaveSiteSettings: (updatedSettings: SiteSettings) => void;
   onResetToDefaults: () => void;
+  onSyncCatalog?: (categoryTree: any[], updatedProducts: Product[]) => Promise<boolean>;
 }
 
 export default function AdminCmsModal({
@@ -36,7 +37,8 @@ export default function AdminCmsModal({
   onSaveCategories,
   siteSettings,
   onSaveSiteSettings,
-  onResetToDefaults
+  onResetToDefaults,
+  onSyncCatalog
 }: AdminCmsModalProps) {
   // AUTHENTICATION STATE
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -173,6 +175,7 @@ export default function AdminCmsModal({
             onClose={onClose}
             onResetToDefaults={onResetToDefaults}
             onLogout={handleLogout}
+            onSyncCatalog={onSyncCatalog}
           />
         )}
 

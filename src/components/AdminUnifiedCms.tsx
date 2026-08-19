@@ -62,6 +62,7 @@ interface AdminUnifiedCmsProps {
   onClose?: () => void;
   onResetToDefaults?: () => void;
   onLogout?: () => void;
+  onSyncCatalog?: (categoryTree: any[], updatedProducts: Product[]) => Promise<boolean>;
 }
 
 export default function AdminUnifiedCms({
@@ -73,7 +74,8 @@ export default function AdminUnifiedCms({
   onSaveSiteSettings,
   onClose,
   onResetToDefaults,
-  onLogout
+  onLogout,
+  onSyncCatalog
 }: AdminUnifiedCmsProps) {
   // Category tree state from categoryData
   const [categoryDefs, setCategoryDefs] = useState<MainCategoryDef[]>(() => getStoredCategories());
@@ -331,7 +333,7 @@ export default function AdminUnifiedCms({
   };
 
   // SAYFAYA YAYINLA (PUBLISH ALL CMS CHANGES TO LIVE WEBSITE)
-  const handlePublishToSite = () => {
+  const handlePublishToSite = async () => {
     saveStoredCategories(categoryDefs);
     
     // Flatten active category names for live web site filters
@@ -354,7 +356,21 @@ export default function AdminUnifiedCms({
       onSaveSiteSettings(cmsSettings);
     }
 
-    showNotify('Tüm kategoriler, ürünler ve sayfa içerikleri canlı sitede başarıyla yayınlandı!');
+    let syncOk = false;
+    if (onSyncCatalog) {
+      try {
+        // Persist the full category tree + products to the real Supabase DB
+        syncOk = await onSyncCatalog(categoryDefs, products);
+      } catch (e) {
+        console.error('Sync catalog failed', e);
+      }
+    }
+
+    showNotify(
+      syncOk
+        ? 'Tüm kategoriler, ürünler ve medya gerçek veritabanına (Supabase) kaydedildi ve canlı sitede yayınlandı!'
+        : 'Değişiklikler tarayıcıya kaydedildi. (Supabase eşitleme için oturum açın veya tekrar deneyin.)'
+    );
   };
 
   // Filter Categories by Smart Search Box

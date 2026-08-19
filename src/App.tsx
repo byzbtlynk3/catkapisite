@@ -41,6 +41,25 @@ const STORAGE_SETTINGS_KEY = 'catkapi_settings_cms_v2';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<string>('home');
+  // Admin panel is only reachable via the /yonetim-giris direct URL.
+  // The public site never exposes a link to it (Navbar has no admin button).
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => window.location.pathname === '/yonetim-giris');
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setIsAdminRoute(window.location.pathname === '/yonetim-giris');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const closeAdminRoute = () => {
+    sessionStorage.removeItem('catkapi_admin_auth');
+    sessionStorage.removeItem('catkapi_admin_token');
+    window.history.pushState({}, '', '/');
+    setIsAdminRoute(false);
+    window.scrollTo(0, 0);
+  };
 
   // Products State
   const [products, setProducts] = useState<Product[]>(() => {
@@ -164,6 +183,34 @@ export default function App() {
   const [selectedProductDetail, setSelectedProductDetail] = useState<Product | null>(null);
 
   // Save Handlers
+
+  // FULL CATALOG SYNC: persists the entire category tree (with IDs + parent links),
+  // products and media to the real Supabase database via /api/admin/syncCatalog.
+  const handleSyncCatalog = async (categoryTree: any[], updatedProducts: Product[]) => {
+    try {
+      const token = sessionStorage.getItem('catkapi_admin_token');
+      if (!token) {
+        console.warn('Sync catalog skipped - no admin token');
+        return false;
+      }
+      const res = await fetch('/api/admin/syncCatalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ categories: categoryTree, products: updatedProducts })
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        console.warn('Sync catalog failed', j.error || j);
+        return false;
+      }
+      console.log('Catalog synced to Supabase', j);
+      return true;
+    } catch (e) {
+      console.warn('Sync catalog error', e);
+      return false;
+    }
+  };
+
   const handleSaveProducts = (updatedProducts: Product[]) => {
     setProducts(updatedProducts);
     try {
@@ -281,14 +328,40 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // If the URL is /yonetim-giris, render ONLY the admin panel as a full page.
+  // The public site (Navbar, footer, etc.) is never shown on this route.
+  if (isAdminRoute) {
+    return (
+      <div id="admin-route-root" className="min-h-screen bg-[#0b0b0b] text-white font-sans">
+        <AdminCmsModal
+          isOpen={true}
+          onClose={closeAdminRoute}
+          products={products}
+          onSaveProducts={handleSaveProducts}
+          categories={categories}
+          onSaveCategories={handleSaveCategories}
+          galleryItems={galleryItems}
+          onSaveGallery={handleSaveGallery}
+          videos={videos}
+          onSaveVideos={handleSaveVideos}
+          catalogs={catalogs}
+          onSaveCatalogs={handleSaveCatalogs}
+          siteSettings={siteSettings}
+          onSaveSiteSettings={handleSaveSiteSettings}
+          onResetToDefaults={handleResetToDefaults}
+          onSyncCatalog={handleSyncCatalog}
+        />
+      </div>
+    );
+  }
+
   return (
     <div id="cat-kapi-root" className="min-h-screen bg-[#111111] text-white flex flex-col font-sans select-none selection:bg-amber-500/20 selection:text-amber-400 relative">
       
-      {/* Dynamic Header with CMS Trigger */}
+      {/* Dynamic Header (public site only - no admin links visible to customers) */}
       <Navbar 
         currentTab={currentTab} 
         setCurrentTab={setCurrentTab} 
-        onOpenAdminCms={() => setIsAdminCmsOpen(true)}
         siteSettings={siteSettings}
       />
 

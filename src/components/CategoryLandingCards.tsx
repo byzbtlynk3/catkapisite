@@ -41,7 +41,7 @@ export default function CategoryLandingCards({
             <span className="text-stone-300 text-xs font-mono font-bold">{categoryDef.subCategories.length} Alt Seçenek</span>
           </div>
           <h2 className="text-2xl font-black text-white font-sans flex items-center gap-2">
-            <span>{categoryDef.name} Koleksiyonu</span>
+            <span>{categoryDef.name}</span>
           </h2>
           <p className="text-stone-400 text-xs mt-1 max-w-2xl">
             {categoryDef.description}
