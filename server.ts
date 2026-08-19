@@ -37,50 +37,87 @@ if (allowedOrigin) {
 }
 
 // Simple in-memory stores for OTPs and temporary tokens
-const otpStore: Map<string, { hash: string; expiresAt: number; attempts: number }> = new Map();
+const otpStore: Map<string, { hash: string; expiresAt: number; attempts: number; lastSentAt: number }> = new Map();
 const otpVerifiedTokens: Map<string, { phone: string; expiresAt: number }> = new Map();
 const sessions: Map<string, { username: string; expiresAt: number }> = new Map();
 
+const OTP_TTL_MS = 1000 * 60 * 5;         // OTP valid 5 minutes
+const OTP_RESEND_COOLDOWN_MS = 1000 * 60; // 60 seconds before resend
+const OTP_MAX_ATTEMPTS = 5;               // max wrong-code attempts before invalidation
+
 const ADMIN_FILE = path.join(process.cwd(), 'admin.json');
 
-async function ensureAdminFile() {
-  try {
-    await fs.access(ADMIN_FILE);
-  } catch (e) {
-    // If Supabase is configured, ensure an admin user exists in DB
-    const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-    const providedPass = process.env.ADMIN_PASSWORD;
-    if (adminSupabase) {
-      // In production require ADMIN_PASSWORD to be explicitly provided to seed admin
-      if (process.env.NODE_ENV === 'production' && !providedPass) {
-        console.error('ADMIN_PASSWORD env var must be set in production to initialize admin user in DB.');
-        throw new Error('Missing ADMIN_PASSWORD in production');
-      }
-      const passwordToUse = providedPass || 'catkapi33';
-      const salt = crypto.randomBytes(16).toString('hex');
-      const hash = crypto.scryptSync(passwordToUse, salt, 64).toString('hex');
-      try {
-        const { error } = await adminSupabase.from('admins').upsert({ username: adminUsername, salt, hash }, { onConflict: 'username' });
-        if (error) throw error;
-        console.log('Admin user ensured in DB');
-        return;
-      } catch (dbErr) {
-        console.error('Failed to ensure admin in DB:', dbErr);
-        throw dbErr;
-      }
-    }
+async function hashPassword(password: string) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return { salt, hash };
+}
 
-    // Fallback: write local admin.json for development
-    if (process.env.NODE_ENV === 'production' && !providedPass) {
+// Ensure the admin user exists (seeded from ADMIN_USERNAME / ADMIN_PASSWORD env vars).
+// Uses scrypt hashed credentials — password is NEVER stored in plain text.
+async function ensureAdminFile() {
+  const adminUsername = (process.env.ADMIN_USERNAME || 'admin').toLowerCase().trim();
+  const providedPass = process.env.ADMIN_PASSWORD;
+
+  // If Supabase is configured, ensure admin user exists in DB (production source of truth).
+  if (adminSupabase) {
+    try {
+      const { data: existing } = await adminSupabase.from('admins').select('*').eq('username', adminUsername).limit(1).maybeSingle();
+      if (existing && existing.id) {
+        // If ADMIN_PASSWORD env is provided, re-hash/update so env stays source of truth.
+        if (providedPass) {
+          const { salt, hash } = await hashPassword(providedPass);
+          const { error } = await adminSupabase.from('admins').update({ salt, hash }).eq('id', existing.id);
+          if (error) throw error;
+          console.log('Admin password re-hashed from env');
+        }
+        return;
+      }
+      if (!providedPass) {
+        if (process.env.NODE_ENV === 'production') {
+          console.error('ADMIN_PASSWORD env var must be set in production to initialize admin user in DB.');
+          throw new Error('Missing ADMIN_PASSWORD in production');
+        }
+        return;
+      }
+      const { salt, hash } = await hashPassword(providedPass);
+      const { error } = await adminSupabase.from('admins').upsert({ username: adminUsername, salt, hash }, { onConflict: 'username' });
+      if (error) throw error;
+      console.log('Admin user ensured in DB:', adminUsername);
+      return;
+    } catch (dbErr) {
+      console.error('Failed to ensure admin in DB:', dbErr);
+      throw dbErr;
+    }
+  }
+
+  // Fallback: local admin.json (development / no Supabase configured)
+  try {
+    const raw = await fs.readFile(ADMIN_FILE, 'utf8');
+    const existing = JSON.parse(raw);
+    if (existing && existing.username === adminUsername) {
+      if (providedPass) {
+        const { salt, hash } = await hashPassword(providedPass);
+        existing.salt = salt;
+        existing.hash = hash;
+        await fs.writeFile(ADMIN_FILE, JSON.stringify(existing, null, 2), 'utf8');
+      }
+      return;
+    }
+  } catch (e) {
+    // file missing - fall through and create it
+  }
+
+  if (!providedPass) {
+    if (process.env.NODE_ENV === 'production') {
       console.error('ADMIN_PASSWORD env var must be set in production to initialize admin user.');
       throw new Error('Missing ADMIN_PASSWORD in production');
     }
-    const passwordToUse = providedPass || 'catkapi33';
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.scryptSync(passwordToUse, salt, 64).toString('hex');
-    const content = { username: adminUsername, salt, hash };
-    await fs.writeFile(ADMIN_FILE, JSON.stringify(content, null, 2), 'utf8');
+    return;
   }
+  const { salt, hash } = await hashPassword(providedPass);
+  const content = { username: adminUsername, salt, hash };
+  await fs.writeFile(ADMIN_FILE, JSON.stringify(content, null, 2), 'utf8');
 }
 
 async function verifyAdminCredentials(username: string, password: string) {
@@ -253,18 +290,36 @@ app.post('/api/admin/login', async (req, res) => {
   res.json({ token });
 });
 
+// Admin logout: invalidate the session token (both DB-backed and in-memory)
+app.post('/api/admin/logout', async (req, res) => {
+  const auth = req.headers?.authorization || '';
+  const m = String(auth).match(/^Bearer\s+(.+)$/i);
+  if (!m) return res.status(400).json({ error: 'Token eksik' });
+  const token = m[1];
+  if (adminSupabase) {
+    try {
+      await adminSupabase.from('admin_sessions').delete().eq('token', token);
+    } catch (e) {
+      console.error('Logout delete session error', e);
+    }
+  }
+  sessions.delete(token);
+  res.json({ ok: true });
+});
+
 app.post('/api/sms/send-otp', async (req, res) => {
   const { phone } = req.body || {};
   if (!phone || !AUTH_PHONES.includes(phone)) return res.status(400).json({ error: 'Yetkili numara değil veya eksik.' });
-  // rate limiting basic
   const existing = otpStore.get(phone);
-  if (existing && existing.expiresAt > Date.now() && existing.attempts > 5) {
-    return res.status(429).json({ error: 'Çok fazla istek. Lütfen kısa süre sonra tekrar deneyin.' });
+  // 60-second resend cooldown to prevent SMS spamming
+  if (existing && Date.now() - existing.lastSentAt < OTP_RESEND_COOLDOWN_MS) {
+    const waitSec = Math.ceil((OTP_RESEND_COOLDOWN_MS - (Date.now() - existing.lastSentAt)) / 1000);
+    return res.status(429).json({ error: `Yeni kod göndermek için ${waitSec} saniye bekleyin.`, retryAfterSec: waitSec });
   }
   const code = String(Math.floor(100000 + Math.random() * 900000));
   const salt = crypto.randomBytes(8).toString('hex');
   const hash = crypto.createHmac('sha256', salt).update(code).digest('hex');
-  otpStore.set(phone, { hash: salt + ':' + hash, expiresAt: Date.now() + 1000 * 60 * 5, attempts: 0 });
+  otpStore.set(phone, { hash: salt + ':' + hash, expiresAt: Date.now() + OTP_TTL_MS, attempts: 0, lastSentAt: Date.now() });
   const msg = `Çat Kapı doğrulama kodunuz: ${code}`;
   try {
     const result = await sendSmsViaProvider(phone, msg);
@@ -290,7 +345,11 @@ app.post('/api/sms/verify-otp', async (req, res) => {
   entry.attempts = (entry.attempts || 0) + 1;
   if (h !== stored) {
     otpStore.set(phone, entry);
-    return res.status(400).json({ error: 'Doğrulama kodu hatalı.' });
+    if (entry.attempts >= OTP_MAX_ATTEMPTS) {
+      otpStore.delete(phone);
+      return res.status(429).json({ error: 'Çok fazla hatalı deneme. Lütfen tekrar kod isteyin.' });
+    }
+    return res.status(400).json({ error: `Doğrulama kodu hatalı (kalan deneme: ${OTP_MAX_ATTEMPTS - entry.attempts}).` });
   }
   // success
   otpStore.delete(phone);
@@ -473,6 +532,111 @@ app.post('/api/admin/syncCategories', async (req, res) => {
     res.json({ ok: true });
   } catch (e:any) {
     console.error('Sync categories error', e);
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// FULL CATALOG SYNC: persists categories (with parent hierarchy), products, and media
+// to Supabase. This is the source of truth for all customer-facing data.
+app.post('/api/admin/syncCatalog', async (req, res) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+  if (!adminSupabase) return res.status(500).json({ error: 'Supabase admin client not configured' });
+
+  const { categories, products } = req.body || {};
+  if (!Array.isArray(products)) return res.status(400).json({ error: 'Invalid payload' });
+
+  const slugify = (input = '') => String(input)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9ğüşöçıİĞÜŞÖÇ\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+
+  try {
+    // ---- 1. CATEGORIES: upsert full tree with parent_id links ----
+    const categoryRows: any[] = [];
+    if (Array.isArray(categories)) {
+      categories.forEach((main: any, mainIdx: number) => {
+        categoryRows.push({
+          id: main.id || undefined,
+          name: main.name || String(main),
+          slug: main.slug || (main.id && main.id.startsWith('main-') ? slugify(main.name || 'kategori') : main.id) || slugify(main.name || 'kategori'),
+          parent_id: null,
+          sort_order: mainIdx,
+          is_active: main.isActive !== false
+        });
+        (main.subCategories || []).forEach((sub: any, subIdx: number) => {
+          categoryRows.push({
+            id: sub.id || undefined,
+            name: sub.name || String(sub),
+            slug: sub.slug || (sub.id && sub.id.startsWith('sub-') ? slugify(sub.name || 'alt') : sub.id) || slugify(sub.name || 'alt'),
+            parent_id: main.id || null,
+            sort_order: subIdx,
+            is_active: sub.isActive !== false
+          });
+        });
+      });
+    }
+    if (categoryRows.length > 0) {
+      const { error: catErr } = await adminSupabase.from('categories').upsert(categoryRows, { onConflict: 'id' });
+      if (catErr) throw catErr;
+    }
+
+    // ---- 2. PRODUCTS: upsert full product list ----
+    const productRows = products.map((p:any) => ({
+      id: p.id || undefined,
+      name: p.name,
+      product_code: p.productCode || null,
+      description: p.description || p.extendedDescription || null,
+      material: Array.isArray(p.materials) ? p.materials.join('\n') : (p.material || null),
+      dimensions_text: typeof p.dimensions === 'object' ? JSON.stringify(p.dimensions) : (p.dimensions || p.dimensions_text || null),
+      category_id: p.category_id || p.categoryId || null,
+      subcategory_id: p.subcategory_id || p.subCategoryId || null,
+      price: p.startingPrice ?? p.price ?? 0,
+      campaign_price: p.campaignPrice ?? p.campaign_price ?? null,
+      price_display_mode: p.priceDisplayMode || 'numeric',
+      is_campaign: !!p.isCampaign || !!p.campaignPrice,
+      is_new: !!p.isNew,
+      is_published: !p.isHidden,
+      is_hidden: !!p.isHidden,
+      cover_image_index: p.coverImageIndex || 0,
+      stock_status: p.stockStatus || 'Sipariş Üzerine Üretiliyor',
+      brand: p.brand || null,
+      metadata: p.specs || {},
+      updated_at: new Date().toISOString()
+    }));
+
+    if (productRows.length > 0) {
+      const { error: prodErr } = await adminSupabase.from('products').upsert(productRows, { onConflict: 'id' });
+      if (prodErr) throw prodErr;
+    }
+
+    // ---- 3. PRODUCT MEDIA: replace media for each product with current images ----
+    for (const p of products) {
+      const imgs = Array.isArray(p.images) ? p.images : [];
+      const pid = p.id;
+      if (!pid) continue;
+      await adminSupabase.from('product_media').delete().eq('product_id', pid);
+      for (let i = 0; i < imgs.length; i++) {
+        const url = imgs[i];
+        if (!url || url.startsWith('data:')) continue;
+        const isVideo = url.includes('.mp4') || url.includes('youtube') || url.includes('youtu.be');
+        await adminSupabase.from('product_media').insert({
+          product_id: pid,
+          media_url: url,
+          media_type: isVideo ? 'video' : 'image',
+          sort_order: i,
+          is_cover: i === (p.coverImageIndex || 0)
+        });
+      }
+    }
+
+    res.json({ ok: true, categoriesSynced: categoryRows.length, productsSynced: productRows.length });
+  } catch (e:any) {
+    console.error('Sync catalog error', e);
     res.status(500).json({ error: String(e) });
   }
 });
