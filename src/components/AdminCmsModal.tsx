@@ -61,7 +61,8 @@ export default function AdminCmsModal({
       headers: {
         'Content-Type': 'application/json',
         'X-Admin-Username': user,
-        'X-Admin-Password': pass
+        'X-Admin-Password': pass,
+        'Authorization': `Basic ${btoa(`${user}:${pass}`)}`
       },
       body: JSON.stringify({ username: user, password: pass })
     })

@@ -274,8 +274,19 @@ app.post('/api/gemini/chat', async (req, res) => {
 
 app.post('/api/admin/login', async (req, res) => {
   const requestBody = req.body || {};
-  const username = requestBody.username || req.headers['x-admin-username'];
-  const password = requestBody.password || req.headers['x-admin-password'];
+  const basicCredentials = String(req.headers.authorization || '').match(/^Basic\s+(.+)$/i);
+  let basicUsername = '';
+  let basicPassword = '';
+  if (basicCredentials) {
+    const decoded = Buffer.from(basicCredentials[1], 'base64').toString('utf8');
+    const separator = decoded.indexOf(':');
+    if (separator >= 0) {
+      basicUsername = decoded.slice(0, separator);
+      basicPassword = decoded.slice(separator + 1);
+    }
+  }
+  const username = requestBody.username || req.headers['x-admin-username'] || basicUsername;
+  const password = requestBody.password || req.headers['x-admin-password'] || basicPassword;
   if (!username || !password) return res.status(400).json({ error: 'Eksik parametre' });
   await ensureAdminFile();
   const ok = await verifyAdminCredentials(username, password);
