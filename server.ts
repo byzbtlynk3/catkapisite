@@ -6,6 +6,7 @@ import fs from 'fs/promises';
 import crypto from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
+import pg from 'pg';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -256,7 +257,7 @@ app.post('/api/gemini/chat', async (req, res) => {
     });
 
     const response = await chat.sendMessage({ message });
-    res.json({ text: response.text });
+    res.json({ text: response.text || '' });
   } catch (err: any) {
     console.error('Gemini chat error:', err);
     res.status(500).json({ error: 'Sistem şu anda yanıt veremiyor. Lütfen daha sonra tekrar deneyin.' });
@@ -293,7 +294,7 @@ app.post('/api/admin/login', async (req, res) => {
 // Admin logout: invalidate the session token (both DB-backed and in-memory)
 app.post('/api/admin/logout', async (req, res) => {
   const auth = req.headers?.authorization || '';
-  const m = String(auth).match(/^Bearer\s+(.+)$/i);
+  const m: RegExpMatchArray | null = String(auth).match(/^Bearer\s+(.+)$/i);
   if (!m) return res.status(400).json({ error: 'Token eksik' });
   const token = m[1];
   if (adminSupabase) {
@@ -377,7 +378,7 @@ app.post('/api/admin/change-password', async (req, res) => {
 // Helper: require admin session from Authorization header
 async function requireAdmin(req: any, res: any) {
   const auth = req.headers?.authorization || '';
-  const m = String(auth).match(/^Bearer\s+(.+)$/i);
+  const m: RegExpMatchArray | null = String(auth).match(/^Bearer\s+(.+)$/i);
   if (!m) return null;
   const token = m[1];
   // If adminSupabase available, check admin_sessions table first
@@ -434,13 +435,27 @@ app.get('/api/public/products', async (req, res) => {
       const categoryObj = catMap[String(p.category_id)] || null;
       const subObj = catMap[String(p.subcategory_id)] || null;
       const categoryParent = categoryObj && categoryObj.parent_id ? (catMap[String(categoryObj.parent_id)] ? catMap[String(categoryObj.parent_id)].name : null) : null;
+      // Fallback: use category/subCategory names stored in metadata (set by syncProducts/syncCatalog)
+      const meta = p.metadata || {};
+      const categoryName = (categoryObj ? categoryObj.name : null) || meta.category || null;
+      const subCategoryName = (subObj ? subObj.name : null) || meta.subCategory || null;
       return {
         ...p,
-        category: categoryObj ? categoryObj.name : null,
-        subCategory: subObj ? subObj.name : null,
+        category: categoryName,
+        subCategory: subCategoryName,
         category_id: p.category_id,
         subcategory_id: p.subcategory_id,
         category_parent: categoryParent,
+        // Fiyat: Supabase'teki `price`/`campaign_price` alanlarını sitenin beklediği `startingPrice`/`campaignPrice`'a çevir.
+        // Bu olmadan "Fiyat Alınız" görünüyordu.
+        startingPrice: Number(p.price) > 0 ? Number(p.price) : undefined,
+        campaignPrice: Number(p.campaign_price) > 0 ? Number(p.campaign_price) : undefined,
+        isCampaign: !!p.is_campaign || Number(p.campaign_price) > 0,
+        materials: p.material ? String(p.material).split(/\r?\n/).map((value: string) => value.trim()).filter(Boolean) : [],
+        dimensions: p.dimensions_text || meta['Ölçüler'] || meta['Ölçü'] || undefined,
+        specs: meta,
+        priceDisplayMode: p.price_display_mode || 'numeric',
+        price: p.price ?? null,
         images: medias.map(m => m.url),
         media: medias
       };
@@ -472,27 +487,149 @@ app.post('/api/admin/syncProducts', async (req, res) => {
   const { products } = req.body || {};
   if (!Array.isArray(products)) return res.status(400).json({ error: 'Invalid payload' });
   try {
-    // Map frontend product shape to DB columns
+    // FULL product sync: map every frontend field to DB columns so nothing is lost
+    // IMPORTANT: Admin panel uses frontend ids like "main-123" / "sub-456".
+    // Supabase categories.id is UUID; FK constraint fails for non-UUID.
+    // We store category/subCategory NAMES in metadata and null-out invalid category ids.
+    const isUuid = (v:any) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || ''));
     const payload = products.map((p:any) => ({
       id: p.id || undefined,
       name: p.name,
-      description: p.description || null,
-      material: p.material || null,
-      dimensions_text: p.dimensions_text || p.dimensions || null,
-      category_id: p.category_id || p.categoryId || null,
-      subcategory_id: p.subcategory_id || p.subCategoryId || null,
-      price: p.price || p.startingPrice || 0,
-      campaign_price: p.campaignPrice || null,
-      is_published: !!p.is_published || !!p.isPublished || !!p.isCampaign || false,
+      product_code: p.productCode || null,
+      description: p.description || p.extendedDescription || null,
+      material: Array.isArray(p.materials) ? p.materials.join('\n') : (p.material || null),
+      dimensions_text: typeof p.dimensions === 'object' ? JSON.stringify(p.dimensions) : (p.dimensions || p.dimensions_text || null),
+      category_id: isUuid(p.categoryId) ? p.categoryId : null,
+      subcategory_id: isUuid(p.subCategoryId) ? p.subCategoryId : null,
+      price: p.startingPrice ?? p.price ?? 0,
+      campaign_price: p.campaignPrice ?? p.campaign_price ?? null,
+      price_display_mode: p.priceDisplayMode || 'numeric',
+      is_campaign: !!p.isCampaign || !!p.campaignPrice,
+      is_new: !!p.isNew,
+      is_published: !p.isHidden && !p.is_hidden,
+      is_hidden: !!p.isHidden,
+      cover_image_index: p.coverImageIndex || 0,
+      stock_status: p.stockStatus || 'Sipariş Üzerine Üretiliyor',
+      brand: p.brand || null,
+      metadata: { ...(p.specs || {}), category: p.category, subCategory: p.subCategory },
       updated_at: new Date().toISOString()
     }));
 
     const { error } = await adminSupabase.from('products').upsert(payload, { onConflict: 'id' });
     if (error) throw error;
+
+    // DELETE products that are no longer in the admin panel list (permanent delete)
+    // This fixes: "Yönetim panelinden sildiğim ürün normal sitede silinmiyor"
+    try {
+      const incomingIds = products.map((p:any) => p && p.id).filter(Boolean);
+      const { data: existingRows } = await adminSupabase.from('products').select('id');
+      const existingIds = (existingRows || []).map((r:any) => String(r.id));
+      const toDelete = existingIds.filter(id => !incomingIds.includes(id));
+      if (toDelete.length > 0) {
+        await adminSupabase.from('product_media').delete().in('product_id', toDelete);
+        await adminSupabase.from('products').delete().in('id', toDelete);
+        console.log('Deleted removed products:', toDelete);
+      }
+    } catch (delErr:any) {
+      console.error('Deleting removed products error:', delErr?.message || delErr);
+    }
+
+    // Also replace product_media so images appear on the live site
+    for (const p of products) {
+      const imgs = Array.isArray(p.images) ? p.images : [];
+      const pid = p.id;
+      if (!pid) continue;
+      await adminSupabase.from('product_media').delete().eq('product_id', pid);
+      for (let i = 0; i < imgs.length; i++) {
+        const url = imgs[i];
+        if (!url || url.startsWith('data:')) continue;
+        const isVideo = /\.(mp4|mov|webm)(?:[?#].*)?$/i.test(url) || /youtube\.com|youtu\.be|vimeo\.com/i.test(url) || /^data:video\//i.test(url);
+        await adminSupabase.from('product_media').insert({
+          product_id: pid,
+          media_url: url,
+          media_type: isVideo ? 'video' : 'image',
+          sort_order: i,
+          is_cover: i === (p.coverImageIndex || 0)
+        });
+      }
+    }
+
     res.json({ ok: true });
   } catch (e:any) {
     console.error('Sync products error', e);
     res.status(500).json({ error: String(e) });
+  }
+});
+
+// Helper: ensure site_settings table exists using raw pg connection (auto-create)
+async function ensureSiteSettingsTable() {
+  const dbUrl = process.env.SUPABASE_DATABASE_URL;
+  if (!dbUrl) return;
+  const client = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+  try {
+    await client.connect();
+    await client.query(`
+      create table if not exists site_settings (
+        id integer primary key default 1,
+        settings_json jsonb not null default '{}'::jsonb,
+        updated_at timestamptz not null default now()
+      );
+    `);
+    console.log('site_settings table ensured via pg');
+  } catch (e:any) {
+    console.error('ensureSiteSettingsTable error:', e?.message || e);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+app.post('/api/admin/syncSettings', async (req, res) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+  if (!adminSupabase) return res.status(500).json({ error: 'Supabase admin client not configured' });
+  const { settings } = req.body || {};
+  if (!settings || typeof settings !== 'object') return res.status(400).json({ error: 'Invalid payload' });
+  try {
+    // Ensure site_settings table exists (auto-create if missing)
+    try { await adminSupabase.from('site_settings').select('id').limit(1); } catch (tableErr:any) {
+      if (tableErr && (String(tableErr.message || '').includes('does not exist') || String(tableErr.code || '').includes('42P01'))) {
+        await ensureSiteSettingsTable();
+      }
+    }
+    // Upsert into site_settings table (singleton row id=1)
+    const { error } = await adminSupabase.from('site_settings').upsert(
+      { id: 1, settings_json: settings, updated_at: new Date().toISOString() },
+      { onConflict: 'id' }
+    );
+    if (error) {
+      // If table still missing, try creating it then retry
+      await ensureSiteSettingsTable();
+      const retry = await adminSupabase.from('site_settings').upsert(
+        { id: 1, settings_json: settings, updated_at: new Date().toISOString() },
+        { onConflict: 'id' }
+      );
+      if (retry.error) {
+        console.error('Sync settings upsert error:', retry.error);
+        return res.status(500).json({ error: String(retry.error.message || retry.error) });
+      }
+    }
+    res.json({ ok: true });
+  } catch (e:any) {
+    console.error('Sync settings error', e);
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// Public settings endpoint returns the site settings to visitors
+app.get('/api/public/settings', async (req, res) => {
+  try {
+    if (!adminSupabase) return res.json(null);
+    const { data } = await adminSupabase.from('site_settings').select('*').eq('id', 1).limit(1).maybeSingle();
+    if (!data) return res.json(null);
+    res.json(data.settings_json || null);
+  } catch (e:any) {
+    console.error('Public settings error', e);
+    res.status(500).json({ error: 'Sunucu hatası' });
   }
 });
 
@@ -586,6 +723,9 @@ app.post('/api/admin/syncCatalog', async (req, res) => {
     }
 
     // ---- 2. PRODUCTS: upsert full product list ----
+    // IMPORTANT: Admin panel uses frontend ids like "main-123" / "sub-456".
+    // Supabase categories.id is UUID; FK constraint fails for non-UUID.
+    const isUuid = (v:any) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || ''));
     const productRows = products.map((p:any) => ({
       id: p.id || undefined,
       name: p.name,
@@ -593,8 +733,8 @@ app.post('/api/admin/syncCatalog', async (req, res) => {
       description: p.description || p.extendedDescription || null,
       material: Array.isArray(p.materials) ? p.materials.join('\n') : (p.material || null),
       dimensions_text: typeof p.dimensions === 'object' ? JSON.stringify(p.dimensions) : (p.dimensions || p.dimensions_text || null),
-      category_id: p.category_id || p.categoryId || null,
-      subcategory_id: p.subcategory_id || p.subCategoryId || null,
+      category_id: isUuid(p.categoryId) ? p.categoryId : null,
+      subcategory_id: isUuid(p.subCategoryId) ? p.subCategoryId : null,
       price: p.startingPrice ?? p.price ?? 0,
       campaign_price: p.campaignPrice ?? p.campaign_price ?? null,
       price_display_mode: p.priceDisplayMode || 'numeric',
@@ -605,7 +745,7 @@ app.post('/api/admin/syncCatalog', async (req, res) => {
       cover_image_index: p.coverImageIndex || 0,
       stock_status: p.stockStatus || 'Sipariş Üzerine Üretiliyor',
       brand: p.brand || null,
-      metadata: p.specs || {},
+      metadata: { ...(p.specs || {}), category: p.category, subCategory: p.subCategory },
       updated_at: new Date().toISOString()
     }));
 
@@ -623,7 +763,7 @@ app.post('/api/admin/syncCatalog', async (req, res) => {
       for (let i = 0; i < imgs.length; i++) {
         const url = imgs[i];
         if (!url || url.startsWith('data:')) continue;
-        const isVideo = url.includes('.mp4') || url.includes('youtube') || url.includes('youtu.be');
+        const isVideo = /\.(mp4|mov|webm)(?:[?#].*)?$/i.test(url) || /youtube\.com|youtu\.be|vimeo\.com/i.test(url) || /^data:video\//i.test(url);
         await adminSupabase.from('product_media').insert({
           product_id: pid,
           media_url: url,
@@ -646,20 +786,25 @@ app.post('/api/admin/upload-media', async (req, res) => {
   const auth = await requireAdmin(req, res);
   if (!auth) return res.status(401).json({ error: 'Unauthorized' });
   if (!adminSupabase) return res.status(500).json({ error: 'Supabase admin client not configured' });
-  const { product_id, filename, fileBase64, mediaType } = req.body || {};
-  if (!product_id || !filename || !fileBase64) return res.status(400).json({ error: 'Missing params' });
+  const { product_id, filename, fileBase64, mediaType, folder } = req.body || {};
+  if (!filename || !fileBase64) return res.status(400).json({ error: 'Missing params' });
   try {
     // Ensure bucket exists (best-effort)
     try { await adminSupabase.storage.createBucket('product-media', { public: true }); } catch (e) { /* ignore if exists */ }
     const buf = Buffer.from(fileBase64, 'base64');
-    const filePath = `${product_id}/${Date.now()}-${filename}`;
+    // folder: 'product' (varsayılan), 'site' (hero/tanıtım), vb.
+    const isSite = folder === 'site';
+    const basePath = isSite ? 'site-media' : (product_id || 'general');
+    const filePath = `${basePath}/${Date.now()}-${filename}`;
     const { error: uploadErr } = await adminSupabase.storage.from('product-media').upload(filePath, buf, { contentType: mediaType || 'application/octet-stream', upsert: false });
     if (uploadErr) throw uploadErr;
     const { data: urlData } = adminSupabase.storage.from('product-media').getPublicUrl(filePath);
     const mediaUrl = urlData?.publicUrl || '';
-    // Insert into product_media
-    const { error: dbErr } = await adminSupabase.from('product_media').insert([{ product_id, media_url: mediaUrl, media_type: mediaType || 'image', sort_order: 0 }]);
-    if (dbErr) throw dbErr;
+    // Ürün medyası ise → product_media tablosu atomatik dbs
+    if (product_id && !isSite) {
+      const { error: dbErr } = await adminSupabase.from('product_media').insert([{ product_id, media_url: mediaUrl, media_type: mediaType || 'image', sort_order: 0 }]);
+      if (dbErr) console.error('Insert product_media error', dbErr);
+    }
     res.json({ ok: true, url: mediaUrl });
   } catch (e:any) {
     console.error('Upload media error', e);
@@ -755,7 +900,7 @@ app.post('/api/gemini/analyze', async (req, res) => {
 
     let resultJson = {};
     try {
-      resultJson = JSON.parse(response.text.trim());
+      resultJson = JSON.parse((response.text || '').trim());
     } catch (e) {
       // In case parsing fails, create a safe object
       resultJson = {
@@ -764,7 +909,7 @@ app.post('/api/gemini/analyze', async (req, res) => {
         recommendedColor: 'Mersin Adaçayı Yeşili',
         estimatedPrice: 38000,
         deliveryWeeks: 3,
-        explanation: response.text,
+        explanation: response.text || '',
         matchedColorHex: '#707F71'
       };
     }
@@ -863,7 +1008,7 @@ app.post('/api/gemini/enhance-design', async (req, res) => {
       }
     });
 
-    let resultJson = JSON.parse(response.text.trim());
+    let resultJson = JSON.parse((response.text || '').trim());
     res.json({ enhancement: resultJson });
   } catch (err: any) {
     console.error('AI Design Enhancement error:', err);

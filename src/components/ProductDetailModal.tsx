@@ -29,6 +29,7 @@ export default function ProductDetailModal({ product, onClose }: ProductDetailMo
 
   const images = product.images && product.images.length > 0 ? product.images : ['https://images.unsplash.com/photo-1549557454-e69c3a379ad4?q=80&w=1200'];
   const currentImage = images[Math.min(activeImageIndex, images.length - 1)];
+  const isVideoUrl = (url?: string) => !!url && (/\.(mp4|mov|webm)(?:[?#].*)?$/i.test(url) || /youtube\.com|youtu\.be|vimeo\.com/i.test(url));
 
   const handleZoomIn = () => setZoomScale(prev => Math.min(prev + 0.3, 3.0));
   const handleZoomOut = () => setZoomScale(prev => Math.max(prev - 0.3, 1.0));
@@ -92,13 +93,17 @@ export default function ProductDetailModal({ product, onClose }: ProductDetailMo
                 className="w-full h-full flex items-center justify-center transition-transform duration-300"
                 style={{ transform: `scale(${zoomScale})` }}
               >
-                <img
-                  src={currentImage}
-                  alt={product.name}
-                  referrerPolicy="no-referrer"
-                  className="max-w-full max-h-full object-contain cursor-zoom-in"
-                  onClick={handleZoomIn}
-                />
+                {isVideoUrl(currentImage) ? (
+                  <video src={currentImage} controls playsInline className="max-w-full max-h-full object-contain" />
+                ) : (
+                  <img
+                    src={currentImage}
+                    alt={product.name}
+                    referrerPolicy="no-referrer"
+                    className="max-w-full max-h-full object-contain cursor-zoom-in"
+                    onClick={handleZoomIn}
+                  />
+                )}
               </div>
 
               {/* Floating Zoom Control Bar */}
@@ -176,12 +181,16 @@ export default function ProductDetailModal({ product, onClose }: ProductDetailMo
                       activeImageIndex === idx ? 'border-amber-500 scale-105 shadow-md' : 'border-stone-800 opacity-60 hover:opacity-100'
                     }`}
                   >
-                    <img
-                      src={img}
-                      alt={`Thumb ${idx+1}`}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
-                    />
+                    {isVideoUrl(img) ? (
+                      <video src={img} muted playsInline className="w-full h-full object-cover" />
+                    ) : (
+                      <img
+                        src={img}
+                        alt={`Thumb ${idx+1}`}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
+                    )}
                   </button>
                 ))}
               </div>
@@ -213,7 +222,7 @@ export default function ProductDetailModal({ product, onClose }: ProductDetailMo
               <div>
                 <span className="text-stone-400 text-[11px] uppercase font-bold tracking-wider block">Başlangıç İmalat Fiyatı</span>
                 <div className="flex items-baseline space-x-2">
-                  {product.campaignPrice && product.isCampaign ? (
+                  {product.campaignPrice && product.campaignPrice > 0 ? (
                     <>
                       <span className="text-sm line-through text-stone-400 font-bold">{product.startingPrice ? `₺${product.startingPrice.toLocaleString('tr-TR')}` : ''}</span>
                       <span className="text-2xl sm:text-3xl font-black text-emerald-400 font-sans">{`₺${product.campaignPrice.toLocaleString('tr-TR')}`}</span>

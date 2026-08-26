@@ -29,8 +29,15 @@ import {
   ImagePlus,
   Users,
   User,
-  Sparkles
+  Sparkles,
+  Facebook,
+  Youtube,
+  Music2,
+  Globe,
+  Building2,
+  Link as LinkIcon
 } from 'lucide-react';
+import { SocialPlatform } from './types';
 
 const STORAGE_PRODUCTS_KEY = 'catkapi_products_cms_v2';
 const STORAGE_CATEGORIES_KEY = 'catkapi_categories_cms_v2';
@@ -79,6 +86,7 @@ export default function App() {
   useEffect(() => {
     const tryLoadRemote = async () => {
       try {
+        // Load products from Supabase (source of truth)
         const res = await fetch('/api/public/products');
         if (res.ok) {
           const data = await res.json();
@@ -88,6 +96,7 @@ export default function App() {
           }
         }
 
+        // Load categories from Supabase
         const res2 = await fetch('/api/public/categories');
         if (res2.ok) {
           const cats = await res2.json();
@@ -95,6 +104,16 @@ export default function App() {
             const names = cats.map((c:any) => c.name || c);
             setCategories(names);
             try { localStorage.setItem(STORAGE_CATEGORIES_KEY, JSON.stringify(names)); } catch {}
+          }
+        }
+
+        // Load site settings (contact info, social links, map) from Supabase
+        const res3 = await fetch('/api/public/settings');
+        if (res3.ok) {
+          const settings = await res3.json();
+          if (settings && typeof settings === 'object') {
+            setSiteSettings(settings as SiteSettings);
+            try { localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(settings)); } catch {}
           }
         }
       } catch (e) {
@@ -295,6 +314,21 @@ export default function App() {
     } catch (e) {
       console.error(e);
     }
+    // Try to sync site settings to server (Supabase)
+    (async () => {
+      try {
+        const token = sessionStorage.getItem('catkapi_admin_token');
+        if (!token) return;
+        const res = await fetch('/api/admin/syncSettings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ settings: updatedSettings })
+        });
+        if (!res.ok) console.warn('Sync settings failed', await res.text());
+      } catch (e) {
+        console.warn('Sync settings error', e);
+      }
+    })();
   };
 
   const handleResetToDefaults = () => {
@@ -414,126 +448,65 @@ export default function App() {
               
               <div className="text-center max-w-xl mx-auto space-y-2">
                 <span className="text-amber-500 font-mono text-xs font-extrabold uppercase tracking-widest block">
-                  İLETİŞİM BİLGİLERİMİZ
+                  {siteSettings.contactTitle || 'İLETİŞİM BİLGİLERİMİZ'}
                 </span>
-                <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-                  {siteSettings.companyName || 'Çat Kapı İletişim Kartı'}
-                </h2>
-                <p className="text-stone-400 text-xs sm:text-sm">
-                  Ücretsiz keşif ölçümü, özel üretim talepleri ve fiyat bilgisi için bizimle doğrudan iletişime geçebilirsiniz.
-                </p>
               </div>
 
               {/* Clean, Corporate Contact Card */}
               <div className="bg-[#161616] border border-stone-850 rounded-3xl p-6 sm:p-10 shadow-2xl space-y-8">
                 
+                {/* DYNAMIC CONTACT INFO FROM ADMIN PANEL (socialLinks) — ne yazıldıysa aynen göster */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  
-                  {/* Address Item */}
-                  <div className="flex items-start space-x-4 bg-[#111111] p-5 rounded-2xl border border-stone-800">
-                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl shrink-0 mt-0.5">
-                      <MapPin size={20} />
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold font-mono text-stone-500 uppercase tracking-wider block">
-                        Adres
-                      </span>
-                      <strong className="text-stone-100 font-bold text-sm block leading-relaxed mt-1">
-                        {siteSettings.address}
-                      </strong>
-                    </div>
-                  </div>
+                  {(siteSettings.socialLinks || []).filter((s:any) => s && s.url && s.url.trim()).map((soc:any) => {
+                    const iconMap: Record<SocialPlatform, React.ReactNode> = {
+                      phone: <Phone size={20} className="text-amber-500" />,
+                      whatsapp: <MessageCircle size={20} className="text-emerald-500" />,
+                      instagram: <Instagram size={20} className="text-pink-500" />,
+                      facebook: <Facebook size={20} className="text-blue-500" />,
+                      tiktok: <Music2 size={20} className="text-stone-300" />,
+                      youtube: <Youtube size={20} className="text-red-500" />,
+                      email: <Mail size={20} className="text-blue-400" />,
+                      address: <MapPin size={20} className="text-amber-500" />,
+                      owner: <User size={20} className="text-stone-300" />,
+                      website: <Globe size={20} className="text-amber-400" />,
+                      other: <LinkIcon size={20} className="text-stone-400" />
+                    };
+                    const icon = iconMap[soc.platform as SocialPlatform] || <LinkIcon size={20} className="text-stone-400" />;
+                    const value = soc.url.trim();
+                    const withoutAt = value.replace(/^@/, '');
+                    let href = value;
+                    if (soc.platform === 'phone') href = `tel:${value.replace(/\s+/g, '')}`;
+                    else if (soc.platform === 'whatsapp') href = `https://wa.me/${value.replace(/[^0-9]/g, '')}`;
+                    else if (soc.platform === 'email') href = `mailto:${value}`;
+                    else if (soc.platform === 'instagram' && !/^https?:\/\//i.test(value)) href = `https://instagram.com/${withoutAt}`;
+                    else if (soc.platform === 'facebook' && !/^https?:\/\//i.test(value)) href = `https://facebook.com/${withoutAt}`;
+                    else if (soc.platform === 'tiktok' && !/^https?:\/\//i.test(value)) href = `https://tiktok.com/@${withoutAt}`;
+                    else if (soc.platform === 'youtube' && !/^https?:\/\//i.test(value)) href = `https://youtube.com/@${withoutAt}`;
+                    else if (!/^https?:\/\//i.test(value)) href = `https://${value}`;
+                    // Kullanıcının yazdığı değer olduğu gibi gösterilir (kedi/farklı dönüşüm yok)
+                    const displayUrl = soc.url;
 
-                  {/* Phone Item */}
-                  <div className="flex items-start space-x-4 bg-[#111111] p-5 rounded-2xl border border-stone-800">
-                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl shrink-0 mt-0.5">
-                      <Phone size={20} />
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold font-mono text-stone-500 uppercase tracking-wider block">
-                        Telefon
-                      </span>
-                      <a 
-                        href={`tel:${siteSettings.phone.replace(/\s+/g, '')}`} 
-                        className="text-amber-400 font-black text-lg block mt-0.5 hover:underline"
-                      >
-                        {siteSettings.phone}
-                      </a>
-                    </div>
-                  </div>
-
-                  {/* Owner Item */}
-                  <div className="flex items-start space-x-4 bg-[#111111] p-5 rounded-2xl border border-stone-800">
-                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl shrink-0 mt-0.5">
-                      <User size={20} />
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold font-mono text-stone-500 uppercase tracking-wider block">
-                        Yetkili Kişi
-                      </span>
-                      <strong className="text-stone-100 font-bold text-base block mt-0.5">
-                        {siteSettings.ownerName || 'Nuri Yanık'}
-                      </strong>
-                    </div>
-                  </div>
-
-                  {/* Instagram Item */}
-                  <div className="flex items-start space-x-4 bg-[#111111] p-5 rounded-2xl border border-stone-800">
-                    <div className="p-3 bg-pink-500/10 border border-pink-500/20 text-pink-500 rounded-xl shrink-0 mt-0.5">
-                      <Instagram size={20} />
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold font-mono text-stone-500 uppercase tracking-wider block">
-                        Instagram
-                      </span>
-                      <a 
-                        href={siteSettings.instagram.startsWith('http') ? siteSettings.instagram : `https://instagram.com/${siteSettings.instagram.replace('@', '')}`} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="text-pink-400 font-black text-base block mt-0.5 hover:underline"
-                      >
-                        {siteSettings.instagram}
-                      </a>
-                    </div>
-                  </div>
-
-                  {/* Email Item */}
-                  {siteSettings.email && (
-                    <div className="flex items-start space-x-4 bg-[#111111] p-5 rounded-2xl border border-stone-800">
-                      <div className="p-3 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-xl shrink-0 mt-0.5">
-                        <Mail size={20} />
+                    return (
+                      <div key={soc.id || soc.url} className="flex items-start space-x-4 bg-[#111111] p-5 rounded-2xl border border-stone-800">
+                        <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl shrink-0 mt-0.5">
+                          {icon}
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-bold font-mono text-stone-500 uppercase tracking-wider block">
+                            {soc.name}
+                          </span>
+                          <a
+                            href={href}
+                            target={soc.platform === 'phone' || soc.platform === 'email' ? undefined : '_blank'}
+                            rel="noopener noreferrer"
+                            className="text-amber-400 font-black text-sm block mt-0.5 hover:underline break-words"
+                          >
+                            {displayUrl}
+                          </a>
+                        </div>
                       </div>
-                      <div>
-                        <span className="text-[10px] font-bold font-mono text-stone-500 uppercase tracking-wider block">
-                          E-Posta
-                        </span>
-                        <a 
-                          href={`mailto:${siteSettings.email}`} 
-                          className="text-blue-400 font-bold text-sm block mt-0.5 hover:underline"
-                        >
-                          {siteSettings.email}
-                        </a>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Working Hours Item */}
-                  {siteSettings.workingHours && (
-                    <div className="flex items-start space-x-4 bg-[#111111] p-5 rounded-2xl border border-stone-800">
-                      <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl shrink-0 mt-0.5">
-                        <Clock size={20} />
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-bold font-mono text-stone-500 uppercase tracking-wider block">
-                          Çalışma Saatleri
-                        </span>
-                        <strong className="text-stone-200 font-bold text-xs block leading-relaxed mt-1">
-                          {siteSettings.workingHours}
-                        </strong>
-                      </div>
-                    </div>
-                  )}
-
+                    );
+                  })}
                 </div>
 
                 {/* Direct Actions Row */}
@@ -557,6 +530,48 @@ export default function App() {
                   </a>
                 </div>
 
+                {/* HARİTA / ADRESİMİZ */}
+                <div className="pt-6 border-t border-stone-800 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <MapPin size={16} className="text-amber-500" />
+                    <span className="text-xs font-black text-amber-400 uppercase tracking-wider">ADRESİMİZ</span>
+                  </div>
+                  <div className="w-full h-64 rounded-2xl overflow-hidden border border-stone-800 bg-stone-900 shadow-inner">
+                    <iframe
+                      title="Çat Yapı Dükkân Konumu"
+                      src={siteSettings.googleMapUrl}
+                      width="100%"
+                      height="100%"
+                      style={{ border: 0 }}
+                      allowFullScreen={false}
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <a
+                      href="https://maps.app.goo.gl/TRUDGYFHgDnSG4pm7"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 text-xs font-bold text-amber-400 hover:text-amber-300 hover:underline"
+                    >
+                      <MapPin size={14} />
+                      <span>Google Maps'te Aç</span>
+                      <ExternalLink size={12} />
+                    </a>
+                    <a
+                      href="https://share.google/030bxRVrBCxRMhcnZ"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 text-xs font-bold text-blue-400 hover:text-blue-300 hover:underline"
+                    >
+                      <Globe size={14} />
+                      <span>Google Sayfamız</span>
+                      <ExternalLink size={12} />
+                    </a>
+                  </div>
+                </div>
+
               </div>
 
             </div>
@@ -578,9 +593,13 @@ export default function App() {
               "Kapıdan Mobilyaya, Eviniz İçin Özel Üretim Çözümler." Mersin'in önde gelen özel imalat ahşap ve dijital showroom markası.
             </p>
             <div className="flex items-center space-x-3 pt-1">
-              <a href="https://instagram.com/catyapii" target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-xs text-pink-400 hover:underline">
+              <a href={(() => {
+                const v = siteSettings?.instagram || '@catyapii';
+                const clean = v.replace(/^@/, '').trim();
+                return /^https?:\/\//i.test(clean) ? clean : `https://instagram.com/${clean}`;
+              })()} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-xs text-pink-400 hover:underline">
                 <Instagram size={14} />
-                <span>@catyapii</span>
+                <span>{siteSettings?.instagram || '@catyapii'}</span>
               </a>
             </div>
           </div>
@@ -592,7 +611,11 @@ export default function App() {
               <button onClick={() => setCurrentTab('products')} className="hover:text-amber-400 text-left transition-colors font-semibold">● Ürünler</button>
               <button onClick={() => setCurrentTab('design-center')} className="hover:text-amber-400 text-left transition-colors font-semibold">● Tasarım Merkezi</button>
               <button onClick={() => setCurrentTab('contact')} className="hover:text-amber-400 text-left transition-colors font-semibold">● İletişim</button>
-              <a href="https://instagram.com/catyapii" target="_blank" rel="noopener noreferrer" className="hover:text-pink-400 text-left transition-colors font-semibold col-span-2">● Instagram (@catyapii)</a>
+              <a href={(() => {
+                const v = siteSettings?.instagram || '@catyapii';
+                const clean = v.replace(/^@/, '').trim();
+                return /^https?:\/\//i.test(clean) ? clean : `https://instagram.com/${clean}`;
+              })()} target="_blank" rel="noopener noreferrer" className="hover:text-pink-400 text-left transition-colors font-semibold col-span-2">● Instagram ({siteSettings?.instagram || '@catyapii'})</a>
             </div>
           </div>
 

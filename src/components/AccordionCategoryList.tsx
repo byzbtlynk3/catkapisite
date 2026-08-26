@@ -173,11 +173,6 @@ export default function AccordionCategoryList({
                   <span className="tracking-tight">{mainCat.name}</span>
                 </div>
 
-                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                  isMainSelected ? 'bg-black/20 text-black font-bold' : 'text-stone-500 bg-stone-900'
-                }`}>
-                  {activeSubCategories.length} Alt Çeşit
-                </span>
               </div>
 
               {/* ACCORDION SUB-CATEGORIES EXPANDED LIST */}

@@ -15,7 +15,7 @@ create table if not exists categories (
 );
 
 create table if not exists products (
-  id uuid primary key default gen_random_uuid(),
+  id text primary key default gen_random_uuid()::text,
   name text not null,
   product_code text,
   description text,
@@ -40,7 +40,7 @@ create table if not exists products (
 
 create table if not exists product_media (
   id uuid primary key default gen_random_uuid(),
-  product_id uuid not null references products(id) on delete cascade,
+  product_id text not null references products(id) on delete cascade,
   media_url text not null,
   media_type text not null default 'image',
   sort_order integer not null default 0,
@@ -61,6 +61,12 @@ create table if not exists admin_sessions (
   username text not null,
   expires_at timestamptz not null,
   created_at timestamptz not null default now()
+);
+
+create table if not exists site_settings (
+  id integer primary key default 1,
+  settings_json jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
 );
 
 create or replace function set_updated_at()

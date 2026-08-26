@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Product } from '../types';
 import UnifiedCategoryFilter from './UnifiedCategoryFilter';
-import CategoryLandingCards from './CategoryLandingCards';
 import { 
   Maximize2, 
   MessageCircle, 
@@ -16,6 +15,7 @@ interface ShowroomProps {
 }
 
 export default function Showroom({ products, onOpenConfigurator, onSelectProductDetail }: ShowroomProps) {
+  const isVideoUrl = (url?: string) => !!url && (/\.(mp4|mov|webm)(?:[?#].*)?$/i.test(url) || /youtube\.com|youtu\.be|vimeo\.com/i.test(url));
   // Single-selection: main category and optional subcategory (strict matching)
   const [selectedMainCategory, setSelectedMainCategory] = useState<string | null>(null);
   const [selectedSubCategory, setSelectedSubCategory] = useState<string | null>(null);
@@ -45,20 +45,22 @@ export default function Showroom({ products, onOpenConfigurator, onSelectProduct
     if (!selectedMainNorm) {
       matchesCategory = true;
     } else if (selectedMainNorm && !selectedSubNorm) {
+      // Main category selected: match by category name OR categoryId
       matchesCategory = prodCat === selectedMainNorm || prodMainId === selectedMainNorm;
     } else {
+      // Both main and sub category selected: STRICT matching
       const selectedSubIdNorm = normalize(selectedSubCategory || '');
-      matchesCategory =
-        (prodCat === selectedMainNorm || prodMainId === normalize(selectedMainCategory || '')) &&
-        (prodSub === selectedSubNorm || prodSubId === selectedSubIdNorm || (prodSub === '' && prodSubId === ''));
+      const mainMatches = prodCat === selectedMainNorm || prodMainId === normalize(selectedMainCategory || '');
+      const subMatches = prodSub === selectedSubNorm || prodSubId === selectedSubIdNorm;
+      matchesCategory = mainMatches && subMatches;
     }
 
-    const q = searchQuery.trim().toLocaleLowerCase();
+    const q = normalize(searchQuery.trim());
     const matchesSearch = !q ||
-      p.name.toLowerCase().includes(q) ||
-      p.category.toLowerCase().includes(q) ||
-      (p.subCategory && p.subCategory.toLowerCase().includes(q)) ||
-      p.description.toLowerCase().includes(q);
+      normalize(p.name).includes(q) ||
+      normalize(p.category).includes(q) ||
+      normalize(p.subCategory).includes(q) ||
+      normalize(p.description).includes(q);
 
     return matchesCategory && matchesSearch;
   });
@@ -90,16 +92,6 @@ export default function Showroom({ products, onOpenConfigurator, onSelectProduct
           setSearchQuery={setSearchQuery}
           totalCount={filteredProducts.length}
         />
-
-        {/* Category Landing Cards for Selected Main Category */}
-        {selectedMainCategory && (
-          <CategoryLandingCards
-            selectedMainCategory={selectedMainCategory}
-            selectedSubCategory={selectedSubCategory}
-            onSelectSubCategory={setSelectedSubCategory}
-            onOpen3DStudio={handleOpen3DStudio}
-          />
-        )}
 
         {/* PRODUCTS GRID */}
         {filteredProducts.length > 0 ? (
@@ -148,12 +140,16 @@ export default function Showroom({ products, onOpenConfigurator, onSelectProduct
                     </div>
 
                     {/* Image with zoom preview hover */}
-                    <img
-                      src={coverImg}
-                      alt={product.name}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"
-                    />
+                    {isVideoUrl(coverImg) ? (
+                      <video src={coverImg} muted playsInline controls className="w-full h-full object-cover object-center" />
+                    ) : (
+                      <img
+                        src={coverImg}
+                        alt={product.name}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"
+                      />
+                    )}
 
                     <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <div className="px-4 py-2 bg-stone-950/85 backdrop-blur text-white text-xs font-bold rounded-xl border border-stone-800 flex items-center gap-2">
@@ -182,7 +178,7 @@ export default function Showroom({ products, onOpenConfigurator, onSelectProduct
                         <div className="mb-3 pt-3 border-t border-stone-850 flex items-baseline justify-between">
                           <span className="text-[10px] text-stone-400 font-bold uppercase">Başlangıç Fiyatı</span>
                           <span className="font-black text-base font-sans">
-                            {product.campaignPrice && product.isCampaign ? (
+                            {product.campaignPrice && product.campaignPrice > 0 ? (
                               <>
                                 <span className="text-sm line-through text-stone-400 mr-2">{product.startingPrice ? `₺${product.startingPrice.toLocaleString('tr-TR')}` : ''}</span>
                                 <span className="text-amber-400 font-black">{`₺${product.campaignPrice.toLocaleString('tr-TR')}`}</span>
@@ -192,6 +188,17 @@ export default function Showroom({ products, onOpenConfigurator, onSelectProduct
                             )}
                           </span>
                         </div>
+
+                        {(product.materials?.length > 0 || product.dimensions || product.specs?.['Kullanılan Malzeme'] || product.specs?.['Ölçüler'] || product.specs?.['Ölçü']) && (
+                          <div className="mb-3 space-y-1 text-[11px] text-stone-300">
+                            {(product.materials?.length > 0 || product.specs?.['Kullanılan Malzeme']) && (
+                              <p className="line-clamp-2"><span className="font-bold text-stone-500">Malzeme:</span> {product.materials?.join(', ') || product.specs?.['Kullanılan Malzeme']}</p>
+                            )}
+                            {(product.dimensions || product.specs?.['Ölçüler'] || product.specs?.['Ölçü']) && (
+                              <p className="line-clamp-2"><span className="font-bold text-stone-500">Ölçü:</span> {product.dimensions || product.specs?.['Ölçüler'] || product.specs?.['Ölçü']}</p>
+                            )}
+                          </div>
+                        )}
 
                       {/* Action Buttons Row */}
                       <div className="grid grid-cols-2 gap-2 pt-2 border-t border-stone-850">
@@ -224,8 +231,8 @@ export default function Showroom({ products, onOpenConfigurator, onSelectProduct
           </div>
         ) : (
           <div className="text-center py-16 bg-[#161616] border border-stone-850 rounded-3xl p-8">
-            <h4 className="text-white font-bold text-base">Aradığınız kriterlere uygun ürün bulunamadı</h4>
-            <p className="text-stone-400 text-xs mt-2">Filtreleri temizleyerek tüm katoloğu görüntüleyebilirsiniz.</p>
+            <h4 className="text-white font-bold text-base">Aradığınız ürün bulunamadı.</h4>
+            <p className="text-stone-400 text-xs mt-2">Filtreleri temizleyerek tüm kataloğu görüntüleyebilirsiniz.</p>
             <button
               onClick={() => { setSelectedMainCategory(null); setSelectedSubCategory(null); setSearchQuery(''); }}
               className="mt-4 px-6 py-2.5 bg-amber-500 text-black font-extrabold text-xs uppercase rounded-xl"

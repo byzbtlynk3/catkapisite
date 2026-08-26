@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Product, SiteSettings, HeroSlide, PromoSection, SocialLink } from '../types';
+import { Product, SiteSettings, HeroSlide, PromoSection, SocialLink, SocialPlatform } from '../types';
 import { INITIAL_SITE_SETTINGS } from '../data';
 import AdminManufacturingParams from './AdminManufacturingParams';
 import MediaGalleryUploader from './MediaGalleryUploader';
@@ -49,7 +49,11 @@ import {
   Link as LinkIcon,
   ExternalLink,
   User,
-  Compass
+  Compass,
+  Facebook,
+  Youtube,
+  Building2,
+  Music2
 } from 'lucide-react';
 
 interface AdminUnifiedCmsProps {
@@ -77,6 +81,19 @@ export default function AdminUnifiedCms({
   onLogout,
   onSyncCatalog
 }: AdminUnifiedCmsProps) {
+  const normalizeCmsSettings = (settings?: Partial<SiteSettings> | null): SiteSettings => {
+    const defaults = INITIAL_SITE_SETTINGS;
+    return {
+      ...defaults,
+      ...(settings || {}),
+      heroSlides: Array.isArray(settings?.heroSlides) ? settings.heroSlides : defaults.heroSlides,
+      socialLinks: Array.isArray(settings?.socialLinks) ? settings.socialLinks : (defaults.socialLinks || []),
+      promoSection: settings?.promoSection && typeof settings.promoSection === 'object'
+        ? { ...defaults.promoSection, ...settings.promoSection }
+        : defaults.promoSection
+    };
+  };
+
   // Category tree state from categoryData
   const [categoryDefs, setCategoryDefs] = useState<MainCategoryDef[]>(() => getStoredCategories());
   
@@ -86,13 +103,11 @@ export default function AdminUnifiedCms({
 
   // SITE SETTINGS STATE
   const [cmsSettings, setCmsSettings] = useState<SiteSettings>(() => {
-    return siteSettings || INITIAL_SITE_SETTINGS;
+    return normalizeCmsSettings(siteSettings);
   });
 
   useEffect(() => {
-    if (siteSettings) {
-      setCmsSettings(siteSettings);
-    }
+    setCmsSettings(normalizeCmsSettings(siteSettings));
   }, [siteSettings]);
 
   // Selected slide index/id for slider form
@@ -308,6 +323,43 @@ export default function AdminUnifiedCms({
   const showNotify = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(''), 3500);
+  };
+
+  // Yardimci: Bilgisayardan secilen dosyayi (foto/video/gif) Supabase Storage'a yukle,
+  // gorsel URL'sini geri donturur. slider & tanitim & urun icin kullanilir.
+  const uploadMediaFile = async (file: File, opts?: { productId?: string; folder?: 'site' | 'product' }) => {
+    try {
+      const b64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || '');
+          const comma = result.indexOf(',');
+          resolve(comma >= 0 ? result.slice(comma + 1) : result);
+        };
+        reader.onerror = () => reject(new Error('Dosya okunamadı'));
+        reader.readAsDataURL(file);
+      });
+
+      const token = typeof window !== 'undefined' ? sessionStorage.getItem('catkapi_admin_token') : null;
+      const res = await fetch('/api/admin/upload-media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({
+          product_id: opts?.productId || undefined,
+          folder: opts?.folder || 'site',
+          filename: file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_'),
+          fileBase64: b64,
+          mediaType: file.type || 'application/octet-stream'
+        })
+      });
+      if (!res.ok) throw new Error('Yükleme hatası');
+      const data = await res.json();
+      return data.url as string;
+    } catch (err) {
+      console.error('Upload error', err);
+      showNotify('Dosya yüklenerirken hata. Lütfen tekrar deneyin.');
+      return '';
+    }
   };
 
   // Helper to persist category changes & dispatch live events to website
@@ -745,12 +797,16 @@ export default function AdminUnifiedCms({
     const uploadIfDataUrl = async (img: string, idx: number) => {
       if (!img || !img.startsWith('data:')) return img;
       try {
-        const b64 = img.split(',')[1];
-        const filename = `img-${Date.now()}-${idx}.jpg`;
+        const commaIndex = img.indexOf(',');
+        const header = img.slice(0, commaIndex);
+        const b64 = img.slice(commaIndex + 1);
+        const mediaType = header.match(/^data:([^;]+)/i)?.[1] || 'application/octet-stream';
+        const extension = mediaType.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
+        const filename = `media-${Date.now()}-${idx}.${extension}`;
         const res = await fetch('/api/admin/upload-media', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-          body: JSON.stringify({ product_id: prodId, filename, fileBase64: b64, mediaType: 'image' })
+          body: JSON.stringify({ product_id: prodId, filename, fileBase64: b64, mediaType })
         });
         if (!res.ok) {
           console.warn('Upload failed', await res.text());
@@ -885,19 +941,47 @@ export default function AdminUnifiedCms({
     }));
   };
 
-  // SOCIAL LINK HANDLERS
+  // SOCIAL LINK HANDLERS (İletişim Bilgileri)
+  const PLATFORM_LABELS: Record<SocialPlatform, string> = {
+    phone: 'Telefon',
+    whatsapp: 'WhatsApp',
+    instagram: 'Instagram',
+    facebook: 'Facebook',
+    tiktok: 'TikTok',
+    youtube: 'YouTube',
+    email: 'E-posta',
+    address: 'Adres',
+    owner: 'Firma Sahibi',
+    website: 'Web Sitesi',
+    other: 'Diğer'
+  };
+
+  const PLATFORM_ICONS: Record<SocialPlatform, React.ReactNode> = {
+    phone: <Phone size={16} className="text-amber-500" />,
+    whatsapp: <MessageCircle size={16} className="text-emerald-500" />,
+    instagram: <Instagram size={16} className="text-pink-500" />,
+    facebook: <Facebook size={16} className="text-blue-500" />,
+    tiktok: <Music2 size={16} className="text-stone-300" />,
+    youtube: <Youtube size={16} className="text-red-500" />,
+    email: <Mail size={16} className="text-blue-400" />,
+    address: <MapPin size={16} className="text-amber-500" />,
+    owner: <User size={16} className="text-stone-300" />,
+    website: <Globe size={16} className="text-amber-400" />,
+    other: <LinkIcon size={16} className="text-stone-400" />
+  };
+
   const handleAddSocialLink = () => {
     const newSocial: SocialLink = {
       id: 'soc-' + Date.now(),
-      platform: 'instagram',
-      name: 'Instagram',
-      url: 'https://instagram.com/catyapii'
+      platform: 'phone',
+      name: 'Telefon',
+      url: ''
     };
     setCmsSettings(prev => ({
       ...prev,
       socialLinks: [...(prev.socialLinks || []), newSocial]
     }));
-    showNotify('Sosyal medya bağlantısı eklendi.');
+    showNotify('Yeni iletişim bilgisi eklendi. Kategori seçin, ikon otomatik gelecektir. Değişiklik "Sayfaya Yayınla" ile kaydedilir.');
   };
 
   const handleRemoveSocialLink = (id: string) => {
@@ -905,13 +989,20 @@ export default function AdminUnifiedCms({
       ...prev,
       socialLinks: (prev.socialLinks || []).filter(s => s.id !== id)
     }));
-    showNotify('Sosyal medya bağlantısı kaldırıldı.');
+    showNotify('İletişim bilgisi kaldırıldı. Değişiklik "Sayfaya Yayınla" ile kaydedilir.');
   };
 
   const handleUpdateSocialLink = (id: string, field: keyof SocialLink, value: string) => {
     setCmsSettings(prev => ({
       ...prev,
-      socialLinks: (prev.socialLinks || []).map(s => s.id === id ? { ...s, [field]: value } : s)
+      socialLinks: (prev.socialLinks || []).map(s => {
+        if (s.id !== id) return s;
+        const updated = { ...s, [field]: value };
+        if (field === 'platform') {
+          updated.name = PLATFORM_LABELS[value as SocialPlatform] || 'Diğer';
+        }
+        return updated;
+      })
     }));
   };
 
@@ -1387,6 +1478,31 @@ export default function AdminUnifiedCms({
                                   onChange={(e) => handleUpdateSlideField(slide.id, 'image', e.target.value)}
                                   className="flex-1 bg-[#181818] border border-stone-800 text-xs p-2.5 rounded-xl text-white outline-none focus:border-amber-500 font-bold"
                                 />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const el = document.getElementById(`slider-file-${slide.id}`) as HTMLInputElement | null;
+                                    el?.click();
+                                  }}
+                                  className="px-3 py-2 bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shrink-0"
+                                >
+                                  <Upload size={14} />
+                                  <span>Bilgisayardan Yükle (Foto/Video/GIF)</span>
+                                </button>
+                                <input
+                                  id={`slider-file-${slide.id}`}
+                                  type="file"
+                                  accept="image/*,video/*,.gif"
+                                  hidden
+                                  onChange={async (e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) {
+                                      const url = await uploadMediaFile(f, { folder: 'site' });
+                                      if (url) handleUpdateSlideField(slide.id, 'image', url);
+                                    }
+                                    e.target.value = '';
+                                  }}
+                                />
                               </div>
                             </div>
 
@@ -1466,13 +1582,40 @@ export default function AdminUnifiedCms({
                         className="w-full h-full object-cover"
                       />
                     </div>
-                    <input
-                      type="text"
-                      value={cmsSettings.promoSection?.image || ''}
-                      onChange={(e) => handleUpdatePromoField('image', e.target.value)}
-                      placeholder="Görsel URL yapıştırın..."
-                      className="w-full bg-[#111111] border border-stone-800 text-xs p-3 rounded-xl text-white outline-none focus:border-amber-500 font-bold"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={cmsSettings.promoSection?.image || ''}
+                        onChange={(e) => handleUpdatePromoField('image', e.target.value)}
+                        placeholder="Görsel URL yapıştırın..."
+                        className="flex-1 bg-[#111111] border border-stone-800 text-xs p-3 rounded-xl text-white outline-none focus:border-amber-500 font-bold"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const el = document.getElementById('promo-file') as HTMLInputElement | null;
+                          el?.click();
+                        }}
+                        className="px-3 py-2 bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shrink-0"
+                      >
+                        <Upload size={14} />
+                        <span>Bilgisayardan Yükle (Foto/Video/GIF)</span>
+                      </button>
+                      <input
+                        id="promo-file"
+                        type="file"
+                        accept="image/*,video/*,.gif"
+                        hidden
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            const url = await uploadMediaFile(f, { folder: 'site' });
+                            if (url) handleUpdatePromoField('image', url);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                    </div>
                   </div>
 
                   {/* Title & Slogan */}
@@ -1585,6 +1728,17 @@ export default function AdminUnifiedCms({
 
               <div className="bg-[#181818] p-6 rounded-2xl border border-stone-800 grid grid-cols-1 sm:grid-cols-2 gap-6">
                 
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="text-xs font-bold text-amber-400 uppercase tracking-wider block">İletişim Bölümü Başlığı:</label>
+                  <input
+                    type="text"
+                    value={cmsSettings.contactTitle || 'İLETİŞİM BİLGİLERİMİZ'}
+                    onChange={(e) => handleUpdateSettingField('contactTitle', e.target.value)}
+                    placeholder="İLETİŞİM BİLGİLERİMİZ"
+                    className="w-full bg-[#111111] border border-stone-800 text-xs p-3 rounded-xl text-white outline-none focus:border-amber-500 font-bold"
+                  />
+                </div>
+
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-amber-400 uppercase tracking-wider block">Firma Adı:</label>
                   <input
@@ -1685,6 +1839,85 @@ export default function AdminUnifiedCms({
                 </div>
 
               </div>
+
+              {/* ✅ İLETİŞİM BİLGİLERİ YÖNETİMİ (3. İletişim Sayfası Yönetimi altında da) */}
+              <div className="bg-[#181818] p-6 rounded-2xl border border-amber-500/30 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-800 pb-3">
+                  <div>
+                    <h4 className="text-sm font-black text-white uppercase flex items-center gap-2">
+                      <Phone size={18} className="text-emerald-500" />
+                      <span>İletişim Bilgileri (Sosyal Medya & Diğer)</span>
+                    </h4>
+                    <p className="text-stone-400 text-xs mt-0.5">
+                      📢 İletişim bilgisi "Sayfaya Yayınla" butonuyla canlı sitede güncellenir.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddSocialLink}
+                    className="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs uppercase rounded-xl flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus size={14} />
+                    <span>+ Yeni İletişim Bilgisi Ekle</span>
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {(cmsSettings.socialLinks || []).map((soc) => (
+                    <div key={soc.id} className="flex flex-col sm:flex-row items-center gap-3 bg-[#111111] p-3 rounded-xl border border-stone-800">
+                      <div className="w-9 h-9 rounded-xl bg-stone-900 border border-stone-800 flex items-center justify-center shrink-0">
+                        {PLATFORM_ICONS[soc.platform] || <LinkIcon size={16} className="text-stone-400" />}
+                      </div>
+
+                      <select
+                        value={soc.platform}
+                        onChange={(e) => handleUpdateSocialLink(soc.id, 'platform', e.target.value as any)}
+                        className="bg-[#181818] border border-stone-800 text-xs p-2 rounded-lg text-amber-400 font-bold outline-none cursor-pointer sm:w-36"
+                        title="Kategori Seç"
+                      >
+                        <option value="phone">Telefon</option>
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="instagram">Instagram</option>
+                        <option value="facebook">Facebook</option>
+                        <option value="tiktok">TikTok</option>
+                        <option value="youtube">YouTube</option>
+                        <option value="email">E-posta</option>
+                        <option value="address">Adres</option>
+                        <option value="owner">Firma Sahibi</option>
+                        <option value="website">Web Sitesi</option>
+                        <option value="other">Diğer</option>
+                      </select>
+
+                      <input
+                        type="text"
+                        value={soc.name}
+                        onChange={(e) => handleUpdateSocialLink(soc.id, 'name', e.target.value)}
+                        placeholder="Bilgi Adı"
+                        className="bg-[#181818] border border-stone-800 text-xs p-2 rounded-lg text-white font-bold outline-none sm:w-36"
+                      />
+
+                      <input
+                        type="text"
+                        value={soc.url}
+                        onChange={(e) => handleUpdateSocialLink(soc.id, 'url', e.target.value)}
+                        placeholder="Değer / Bağlantı (Örn: 0535 219 47 89 veya https://...)"
+                        className="flex-1 bg-[#181818] border border-stone-800 text-xs p-2 rounded-lg text-stone-200 outline-none w-full"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveSocialLink(soc.id)}
+                        className="p-2 bg-stone-900 hover:bg-red-950 text-stone-400 hover:text-red-400 rounded-lg border border-stone-800 transition-colors cursor-pointer"
+                        title="Sil"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
             </div>
           )}
 
@@ -1740,12 +1973,12 @@ export default function AdminUnifiedCms({
                 )}
               </div>
 
-              {/* SOCIAL MEDIA LINKS MANAGEMENT */}
+              {/* İLETİŞİM BİLGİLERİ MANAGEMENT */}
               <div className="bg-[#181818] p-6 rounded-2xl border border-stone-800 space-y-4">
                 <div className="flex items-center justify-between border-b border-stone-800 pb-3">
                   <h3 className="text-sm font-black text-white uppercase flex items-center gap-2">
-                    <Instagram size={18} className="text-pink-500" />
-                    <span>Sosyal Medya Bağlantıları</span>
+                    <Phone size={18} className="text-amber-500" />
+                    <span>İletişim Bilgileri</span>
                   </h3>
 
                   <button
@@ -1754,23 +1987,35 @@ export default function AdminUnifiedCms({
                     className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs uppercase rounded-xl flex items-center gap-1 cursor-pointer"
                   >
                     <Plus size={14} />
-                    <span>+ Bağlantı Ekle</span>
+                    <span>+ Yeni Bilgi Ekle</span>
                   </button>
                 </div>
 
                 <div className="space-y-3">
                   {(cmsSettings.socialLinks || []).map((soc) => (
                     <div key={soc.id} className="flex flex-col sm:flex-row items-center gap-3 bg-[#111111] p-3 rounded-xl border border-stone-800">
+                      {/* Auto Icon based on selected category */}
+                      <div className="w-9 h-9 rounded-xl bg-stone-900 border border-stone-800 flex items-center justify-center shrink-0">
+                        {PLATFORM_ICONS[soc.platform] || <LinkIcon size={16} className="text-stone-400" />}
+                      </div>
+
+                      {/* Kategori Seç (İlk Alan) */}
                       <select
                         value={soc.platform}
                         onChange={(e) => handleUpdateSocialLink(soc.id, 'platform', e.target.value as any)}
-                        className="bg-[#181818] border border-stone-800 text-xs p-2 rounded-lg text-amber-400 font-bold outline-none cursor-pointer"
+                        className="bg-[#181818] border border-stone-800 text-xs p-2 rounded-lg text-amber-400 font-bold outline-none cursor-pointer sm:w-36"
+                        title="Kategori Seç"
                       >
-                        <option value="instagram">Instagram</option>
+                        <option value="phone">Telefon</option>
                         <option value="whatsapp">WhatsApp</option>
+                        <option value="instagram">Instagram</option>
                         <option value="facebook">Facebook</option>
+                        <option value="tiktok">TikTok</option>
                         <option value="youtube">YouTube</option>
-                        <option value="x">X / Twitter</option>
+                        <option value="email">E-posta</option>
+                        <option value="address">Adres</option>
+                        <option value="owner">Firma Sahibi</option>
+                        <option value="website">Web Sitesi</option>
                         <option value="other">Diğer</option>
                       </select>
 
@@ -1778,15 +2023,15 @@ export default function AdminUnifiedCms({
                         type="text"
                         value={soc.name}
                         onChange={(e) => handleUpdateSocialLink(soc.id, 'name', e.target.value)}
-                        placeholder="Platform Adı"
+                        placeholder="Bilgi Adı"
                         className="bg-[#181818] border border-stone-800 text-xs p-2 rounded-lg text-white font-bold outline-none sm:w-36"
                       />
 
                       <input
                         type="text"
                         value={soc.url}
-                        onChange={(e) => handleUpdateSocialLink(soc.url, 'url', e.target.value)}
-                        placeholder="https://..."
+                        onChange={(e) => handleUpdateSocialLink(soc.id, 'url', e.target.value)}
+                        placeholder="Değer / Bağlantı (Örn: 0535 219 47 89 veya https://...)"
                         className="flex-1 bg-[#181818] border border-stone-800 text-xs p-2 rounded-lg text-stone-200 outline-none w-full"
                       />
 

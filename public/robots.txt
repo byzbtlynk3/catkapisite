@@ -1,0 +1,6 @@
+# robots.txt for Çat Yapı
+User-agent: *
+Allow: /
+Disallow: /yonetim-giris
+
+Sitemap: https://catyapi.vercel.app/sitemap.xml

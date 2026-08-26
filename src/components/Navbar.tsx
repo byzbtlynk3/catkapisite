@@ -30,6 +30,15 @@ export default function Navbar({ currentTab, setCurrentTab, onOpenAdminCms, site
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // Kullanıcının yönetim panelinde yazdığı Instagram değeri neyse o gösterilir.
+  const instagramValue = siteSettings?.instagram || '@catyapi';
+  const instagramUrl = (() => {
+    if (!instagramValue || instagramValue === '@catyapi') return 'https://instagram.com/catyapi';
+    const clean = instagramValue.replace(/^@/, '').trim();
+    if (/^https?:\/\//i.test(clean)) return clean;
+    return `https://instagram.com/${clean}`;
+  })();
+
   return (
     <header id="app-header" className="sticky top-0 z-50 w-full bg-[#111111]/95 text-white shadow-lg backdrop-blur-md border-b border-amber-900/20">
       
@@ -66,9 +75,9 @@ export default function Navbar({ currentTab, setCurrentTab, onOpenAdminCms, site
             )}
 
             <div className="hidden sm:flex items-center space-x-2 border-l border-stone-800 pl-3">
-              <a href="https://instagram.com/catyapii" target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 hover:text-amber-400 transition-colors">
+              <a href={instagramUrl} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 hover:text-amber-400 transition-colors">
                 <Instagram size={11} className="text-pink-500" />
-                <span>@catyapii</span>
+                <span>{instagramValue}</span>
               </a>
             </div>
           </div>

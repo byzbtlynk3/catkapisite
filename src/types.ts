@@ -126,14 +126,29 @@ export interface PromoSection {
   ownerTitle?: string;
 }
 
+export type SocialPlatform = 
+  | 'phone'
+  | 'whatsapp'
+  | 'instagram'
+  | 'facebook'
+  | 'tiktok'
+  | 'youtube'
+  | 'email'
+  | 'address'
+  | 'owner'
+  | 'website'
+  | 'other';
+
 export interface SocialLink {
   id: string;
-  platform: 'instagram' | 'whatsapp' | 'facebook' | 'youtube' | 'x' | 'other';
+  platform: SocialPlatform;
   name: string;
   url: string;
 }
 
 export interface SiteSettings {
+  contactTitle?: string;
+  // İletişim bölümü başlığı (yönetim panelinden değiştirilebilir)
   companyName?: string;
   ownerName?: string;
   phone: string;

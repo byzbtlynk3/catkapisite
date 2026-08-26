@@ -48,12 +48,12 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
     return activeSubCategories[0]?.name || 'Gardırop';
   });
 
-  // Selected Product inside SubCategory
+  // Selected Product inside SubCategory - only "Diğer (Ürünü Yazınız)" option
   const [selectedProduct, setSelectedProduct] = useState<string>('Diğer (Ürünü Yazınız)');
   const [manualProductName, setManualProductName] = useState<string>('');
 
-  // Selected Material
-  const [selectedMaterial, setSelectedMaterial] = useState<string>(() => materialsList[0] || 'MDF Lam');
+  // Material free-text input (müşteri kendisi yazar)
+  const [materialInput, setMaterialInput] = useState<string>('');
 
   // Sliders
   const limits = paramSettings.dimensionLimits || {
@@ -115,25 +115,8 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
     }
   }, [selectedMainCat, categoriesDef]);
 
-  // Available Products for selected Category + SubCategory
-  const availableProducts = allProducts.filter(p => {
-    const matchesCat = p.category === selectedMainCat;
-    const matchesSub = !selectedSubCat || p.subCategory === selectedSubCat;
-    return matchesCat && matchesSub && !p.isHidden;
-  });
-
-  // Update selectedProduct when availableProducts change
-  useEffect(() => {
-    if (availableProducts.length > 0) {
-      setSelectedProduct(availableProducts[0].name);
-    } else {
-      setSelectedProduct('Diğer (Ürünü Yazınız)');
-    }
-  }, [selectedMainCat, selectedSubCat, allProducts.length]);
-
-  const finalProductName = selectedProduct === 'Diğer (Ürünü Yazınız)'
-    ? (manualProductName.trim() || 'Özel Üretim Mobilya')
-    : selectedProduct;
+  const finalProductName = manualProductName.trim() || 'Özel Üretim Mobilya';
+  const finalMaterial = materialInput.trim() || 'Belirtilmedi';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,7 +128,7 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
       `*Ana Kategori:* ${selectedMainCat}\n` +
       `*Alt Kategori:* ${selectedSubCat || 'Genel'}\n` +
       `*Seçilen Ürün:* ${finalProductName}\n` +
-      `*Seçilen Malzeme:* ${selectedMaterial}\n` +
+      `*Seçilen Malzeme:* ${finalMaterial}\n` +
       `*Ölçüler:* En: ${width} cm | Boy: ${height} cm | Derinlik: ${depth} cm\n` +
       `*Tasarım Notları/Dilekler:* ${designNotes || 'Belirtilmedi.'}\n\n` +
       `Mersin içi ücretsiz keşif ölçümü, termin planlaması ve fiyatlandırma hakkında görüşmek istiyorum.`;
@@ -166,9 +149,6 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
           <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-white font-sans">
             Özel Üretim İmalat Talep Sayfası
           </h2>
-          <p className="text-stone-400 text-xs sm:text-sm leading-relaxed">
-            Çat Kapı, standart ölçülerin sınırlarına sıkışmak istemeyenler için butik üretim yapar. Hayalinizdeki mobilyayı veya kapıyı milimetrik olarak üretiyoruz. Parametreleri seçerek doğrudan zanaatkarımız Nuri Bey'e imalat talebi gönderebilirsiniz.
-          </p>
         </div>
 
         {/* Main Form Fields */}
@@ -177,9 +157,6 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
             <span className="flex items-center gap-2">
               <Ruler className="text-amber-500" size={18} />
               <span>İmalat Parametreleri</span>
-            </span>
-            <span className="text-[10px] text-amber-500 font-mono font-bold bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded">
-              Güncel Yazılım
             </span>
           </h3>
 
@@ -203,7 +180,7 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
               <div className="space-y-4 p-4 bg-[#111111] border border-stone-800 rounded-2xl">
                 <label className="block text-amber-400 text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5">
                   <Package size={14} />
-                  <span>Kategori &amp; Ürün Seçimi</span>
+                  <span>Kategori & Ürün Seçimi</span>
                 </label>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -243,7 +220,7 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
                     </select>
                   </div>
 
-                  {/* Step 3: Product Selection */}
+                  {/* Step 3: Product Selection - ONLY "Diğer Ürün" option */}
                   <div className="space-y-1.5">
                     <span className="text-[11px] text-stone-400 font-bold block">3. Adım: Ürün Seçimi</span>
                     <select
@@ -251,11 +228,6 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
                       onChange={(e) => setSelectedProduct(e.target.value)}
                       className="w-full bg-[#181818] border border-stone-750 focus:border-amber-500 text-amber-400 font-extrabold px-3 py-2.5 rounded-xl text-xs outline-none cursor-pointer"
                     >
-                      {availableProducts.map((p) => (
-                        <option key={p.id} value={p.name}>
-                          {p.name}
-                        </option>
-                      ))}
                       <option value="Diğer (Ürünü Yazınız)">Diğer (Ürünü Yazınız)</option>
                     </select>
                   </div>
@@ -263,40 +235,36 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
                 </div>
 
                 {/* Manual Product Name Entry Field */}
-                {(selectedProduct === 'Diğer (Ürünü Yazınız)' || availableProducts.length === 0) && (
-                  <div className="pt-2 space-y-1.5 border-t border-stone-850">
-                    <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
-                      <Edit3 size={13} />
-                      <span>Ürün Adını Yazınız:</span>
-                    </span>
-                    <input
-                      type="text"
-                      placeholder="Örn: Özel Tasarım Sürgülü Vestiyer veya CNC Camlı Kapı..."
-                      value={manualProductName}
-                      onChange={(e) => setManualProductName(e.target.value)}
-                      className="w-full bg-[#181818] border border-amber-500/50 text-white font-bold px-3.5 py-2.5 rounded-xl text-xs outline-none focus:border-amber-400"
-                    />
-                  </div>
-                )}
+                <div className="pt-2 space-y-1.5 border-t border-stone-850">
+                  <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
+                    <Edit3 size={13} />
+                    <span>Ürün Adını Yazınız:</span>
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Örn: Özel Tasarım Sürgülü Vestiyer veya CNC Camlı Kapı..."
+                    value={manualProductName}
+                    onChange={(e) => setManualProductName(e.target.value)}
+                    className="w-full bg-[#181818] border border-amber-500/50 text-white font-bold px-3.5 py-2.5 rounded-xl text-xs outline-none focus:border-amber-400"
+                  />
+                </div>
 
               </div>
 
-              {/* MATERIAL SELECTION (Suntalam completely removed) */}
+              {/* MATERIAL FREE-TEXT INPUT - müşteri kendisi yazar */}
               <div className="space-y-2 p-4 bg-[#111111] border border-stone-800 rounded-2xl">
                 <label className="block text-amber-400 text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5">
                   <Layers size={14} />
                   <span>İmalat Malzemesi</span>
                 </label>
 
-                <select
-                  value={selectedMaterial}
-                  onChange={(e) => setSelectedMaterial(e.target.value)}
-                  className="w-full bg-[#181818] border border-stone-750 focus:border-amber-500 text-stone-200 font-bold px-4 py-3 rounded-xl text-xs outline-none cursor-pointer"
-                >
-                  {materialsList.map((mat) => (
-                    <option key={mat} value={mat}>{mat}</option>
-                  ))}
-                </select>
+                <input
+                  type="text"
+                  placeholder="Malzeme bilgisini yazınız (Örn: MDF, Lake, CNC, Parlak Yüzey)"
+                  value={materialInput}
+                  onChange={(e) => setMaterialInput(e.target.value)}
+                  className="w-full bg-[#181818] border border-amber-500/50 text-white font-bold px-3.5 py-2.5 rounded-xl text-xs outline-none focus:border-amber-400"
+                />
               </div>
 
               {/* DIMENSION SLIDERS */}
@@ -360,7 +328,7 @@ export default function CustomProduction({ products: propsProducts }: CustomProd
               {/* DESIGN NOTES */}
               <div className="space-y-2">
                 <label className="block text-stone-300 text-xs font-bold uppercase tracking-wider">
-                  Özel İstekleriniz &amp; Notlar
+                  Özel İstekleriniz & Notlar
                 </label>
                 <textarea
                   rows={3}

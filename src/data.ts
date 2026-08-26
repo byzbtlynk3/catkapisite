@@ -468,6 +468,7 @@ export const INITIAL_3D_SETTINGS: Custom3DSettings = {
 };
 
 export const INITIAL_SITE_SETTINGS: SiteSettings = {
+  contactTitle: 'İLETİŞİM BİLGİLERİMİZ',
   companyName: 'Çat Kapı Ahşap & Lüks Mimari Çözümleri',
   ownerName: 'Nuri Yanık',
   phone: '0535 219 47 89',
