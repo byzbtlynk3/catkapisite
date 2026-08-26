@@ -272,8 +272,8 @@ app.post("/api/admin/login", async (req, res) => {
       basicPassword = decoded.slice(separator + 1);
     }
   }
-  const username = requestBody.username || req.headers["x-admin-username"] || basicUsername;
-  const password = requestBody.password || req.headers["x-admin-password"] || basicPassword;
+  const username = requestBody.username || req.headers["x-login-username"] || basicUsername;
+  const password = requestBody.password || req.headers["x-login-password"] || basicPassword;
   if (!username || !password) return res.status(400).json({ error: "Eksik parametre" });
   await ensureAdminFile();
   const ok = await verifyAdminCredentials(username, password);
