@@ -260,7 +260,9 @@ Bize ayr\u0131ca [Instagram](https://instagram.com/catyapii) hesab\u0131m\u0131z
   }
 });
 app.post("/api/admin/login", async (req, res) => {
-  const { username, password } = req.body || {};
+  const requestBody = req.body || {};
+  const username = requestBody.username || req.headers["x-admin-username"];
+  const password = requestBody.password || req.headers["x-admin-password"];
   if (!username || !password) return res.status(400).json({ error: "Eksik parametre" });
   await ensureAdminFile();
   const ok = await verifyAdminCredentials(username, password);

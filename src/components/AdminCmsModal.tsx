@@ -58,7 +58,11 @@ export default function AdminCmsModal({
     // Call server-side login endpoint
     fetch('/api/admin/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Username': user,
+        'X-Admin-Password': pass
+      },
       body: JSON.stringify({ username: user, password: pass })
     })
       .then(async (res) => {
