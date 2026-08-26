@@ -29,7 +29,7 @@ const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
 app.use((req, res, next) => {
-  if (process.env.VERCEL) {
+  if (process.env.VERCEL && req.body !== undefined) {
     next();
     return;
   }

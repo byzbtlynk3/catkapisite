@@ -25,7 +25,7 @@ var __dirname = path.dirname(__filename);
 var app = express();
 var PORT = process.env.PORT ? Number(process.env.PORT) : 3e3;
 app.use((req, res, next) => {
-  if (process.env.VERCEL) {
+  if (process.env.VERCEL && req.body !== void 0) {
     next();
     return;
   }
