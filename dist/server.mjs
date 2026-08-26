@@ -260,7 +260,21 @@ Bize ayr\u0131ca [Instagram](https://instagram.com/catyapii) hesab\u0131m\u0131z
   }
 });
 app.post("/api/admin/login", async (req, res) => {
-  const requestBody = req.body || {};
+  let requestBody = req.body || {};
+  if (typeof requestBody === "string") {
+    try {
+      requestBody = JSON.parse(requestBody);
+    } catch {
+      requestBody = {};
+    }
+  }
+  if (Buffer.isBuffer(requestBody)) {
+    try {
+      requestBody = JSON.parse(requestBody.toString("utf8"));
+    } catch {
+      requestBody = {};
+    }
+  }
   const basicCredentials = String(req.headers.authorization || "").match(/^Basic\s+(.+)$/i);
   let basicUsername = "";
   let basicPassword = "";

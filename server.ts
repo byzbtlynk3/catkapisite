@@ -273,7 +273,21 @@ app.post('/api/gemini/chat', async (req, res) => {
 // --- ADMIN AUTH & SMS OTP ENDPOINTS ---
 
 app.post('/api/admin/login', async (req, res) => {
-  const requestBody = req.body || {};
+  let requestBody: any = req.body || {};
+  if (typeof requestBody === 'string') {
+    try {
+      requestBody = JSON.parse(requestBody);
+    } catch {
+      requestBody = {};
+    }
+  }
+  if (Buffer.isBuffer(requestBody)) {
+    try {
+      requestBody = JSON.parse(requestBody.toString('utf8'));
+    } catch {
+      requestBody = {};
+    }
+  }
   const basicCredentials = String(req.headers.authorization || '').match(/^Basic\s+(.+)$/i);
   let basicUsername = '';
   let basicPassword = '';
