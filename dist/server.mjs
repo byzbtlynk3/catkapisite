@@ -24,7 +24,13 @@ var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
 var app = express();
 var PORT = process.env.PORT ? Number(process.env.PORT) : 3e3;
-app.use(express.json({ limit: "12mb" }));
+app.use((req, res, next) => {
+  if (process.env.VERCEL && req.body !== void 0) {
+    next();
+    return;
+  }
+  express.json({ limit: "12mb" })(req, res, next);
+});
 var allowedOrigin = process.env.ALLOWED_ORIGIN || (process.env.NODE_ENV === "production" ? "" : "*");
 if (allowedOrigin) {
   app.use(cors({ origin: allowedOrigin, credentials: true }));

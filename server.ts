@@ -28,7 +28,15 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
-app.use(express.json({ limit: '12mb' }));
+// Vercel's Node runtime may populate req.body before Express runs.
+// Avoid parsing the request stream a second time in that case.
+app.use((req, res, next) => {
+  if (process.env.VERCEL && req.body !== undefined) {
+    next();
+    return;
+  }
+  express.json({ limit: '12mb' })(req, res, next);
+});
 // Configure CORS: allow specific origin from env or allow all in development
 const allowedOrigin = process.env.ALLOWED_ORIGIN || (process.env.NODE_ENV === 'production' ? '' : '*');
 if (allowedOrigin) {
